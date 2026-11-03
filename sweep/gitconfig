@@ -1,0 +1,14 @@
+# Global git config for both sweep containers (GIT_CONFIG_GLOBAL; read-only in the image).
+[user]
+	name = kb-sweep
+	email = kb-sweep@example.invalid
+[core]
+	# The model can write files in the clones; no hook it plants there ever runs.
+	hooksPath = /dev/null
+[safe]
+	directory = *
+[advice]
+	detachedHead = false
+[credential]
+	# Only kb-sweep-push has these variables; in the model's container this yields nothing.
+	helper = "!f() { test \"$1\" = get && echo \"username=$GITEA_USER\" && echo \"password=$GITEA_TOKEN\"; }; f"

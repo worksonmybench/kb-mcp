@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Read(//work/**)",
+      "Edit(//work/**)",
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git restore:*)",
+      "Bash(git reset:*)",
+      "Bash(kb-inbox list:*)",
+      "Bash(kb-inbox show:*)",
+      "Bash(kb-inbox mark:*)"
+    ],
+    "deny": [
+      "WebFetch",
+      "WebSearch",
+      "Bash(git push:*)",
+      "Bash(git remote:*)",
+      "Bash(git config:*)",
+      "Read(//proc/**)",
+      "Read(//inbox/**)",
+      "Read(//home/**)",
+      "Edit(//inbox/**)",
+      "Edit(//work/.run/**)",
+      "Edit(//work/*/.git/**)"
+    ]
+  },
+  "attribution": {"commit": "", "pr": ""},
+  "includeCoAuthoredBy": false,
+  "disableAllHooks": true
+}

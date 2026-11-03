@@ -1,0 +1,14 @@
+[Unit]
+Description=Confine the kb-mcp container's network access
+# Snap Docker's unit is snap.docker.dockerd.service, a packaged Docker's is docker.service.
+# Wants= rather than Requires= so a missing unit can't stop this from running.
+After=snap.docker.dockerd.service docker.service
+Wants=snap.docker.dockerd.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /root/kb-mcp/deploy/kb-mcp-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

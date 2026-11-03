@@ -1,0 +1,15 @@
+[Unit]
+Description=kb-mcp inbox sweep (files captured KB updates into the doc repos)
+After=snap.docker.dockerd.service docker.service kb-mcp-firewall.service
+Wants=snap.docker.dockerd.service
+# Never run the sweep unconfined: its network limits live in the firewall unit.
+Requires=kb-mcp-firewall.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /root/kb-mcp/deploy/kb-sweep.sh
+TimeoutStartSec=45min
+# snap Docker runs the docker CLI in its own scope, so container output isn't attributed to
+# this unit and `journalctl -u kb-sweep` misses it. A fixed identifier tags every line written
+# to this unit's stdout, whoever writes it: read the log with `journalctl -t kb-sweep`.
+SyslogIdentifier=kb-sweep

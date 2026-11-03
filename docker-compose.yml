@@ -1,0 +1,80 @@
+services:
+  kb-mcp:
+    build: .
+    container_name: kb-mcp
+    restart: unless-stopped
+    # tini as PID 1 reaps orphaned processes; without it, orphaned git children became
+    # zombies until pids_limit was exhausted and every sync failed (2026-10-06).
+    init: true
+    env_file: .env
+    # Internet-facing via the Tunnel: lock it down.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    # No `no-new-privileges`: under snap Docker (Ubuntu 24.04, Docker 29.8) it makes every exec
+    # in the container fail with "operation not permitted". With all capabilities dropped,
+    # a non-root user and a read-only rootfs, it added little here.
+    mem_limit: 512m
+    pids_limit: 200
+    ports:
+      - "8765:8000"   # the reverse proxy forwards the public hostname to this port
+    volumes:
+      # Repo mirrors, search index, and the OAuth client/token store. Named volume so it
+      # inherits the image's non-root ownership. Losing it only means logging in again.
+      - kb-data:/data
+      # The KB inbox: its own volume, so the sweep can share it without seeing kb-data.
+      - kb-inbox:/data/inbox
+    networks: [kb]
+
+  # The sweep: one-shot containers started by deploy/kb-sweep.sh (systemd timer), never by
+  # `up`. Two services share one image so the model never runs next to a Gitea write
+  # credential: kb-sweep runs Claude Code, which commits locally and can't push; then
+  # kb-sweep-push pushes those commits and runs no model.
+  kb-sweep:
+    build: {context: ., dockerfile: sweep/Dockerfile}
+    image: kb-sweep:local
+    profiles: [sweep]
+    command: ["sweep"]
+    init: true
+    # CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY). Optional at load time so a missing file
+    # can't break `docker compose up` for kb-mcp; the sweep fails loudly without it.
+    env_file: [{path: .env.sweep, required: false}]
+    read_only: true
+    tmpfs: ["/tmp", "/home/node:uid=1000,gid=1000"]
+    cap_drop: [ALL]
+    mem_limit: 2g
+    pids_limit: 300
+    volumes:
+      - kb-inbox:/inbox
+      - kb-sweep-work:/work
+    networks: [sweep]
+
+  kb-sweep-push:
+    image: kb-sweep:local
+    profiles: [sweep]
+    command: ["push"]
+    init: true
+    env_file: [{path: .env.push, required: false}]   # GITEA_USER / GITEA_TOKEN of the bot account
+    read_only: true
+    tmpfs: ["/tmp", "/home/node:uid=1000,gid=1000"]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    pids_limit: 100
+    volumes:
+      - kb-inbox:/inbox
+      - kb-sweep-work:/work
+    networks: [sweep]
+
+networks:
+  kb:
+    # Fixed bridge name so deploy/kb-mcp-firewall.sh can match it.
+    driver_opts:
+      com.docker.network.bridge.name: br-kb
+  sweep:
+    driver_opts:
+      com.docker.network.bridge.name: br-kbsweep
+
+volumes:
+  kb-data:
+  kb-inbox:
+  kb-sweep-work:
