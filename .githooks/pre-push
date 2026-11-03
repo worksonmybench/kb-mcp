@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Refuse a push that would publish personal details. Maintainer-only and opt-in:
+
+    git config core.hooksPath .githooks
+
+For every commit being pushed, it checks the author and committer against the repo's pseudonym,
+then scans the message and each added line for private network details, credentials and entries
+from a local blocklist that never lives in the repo:
+
+    ~/.config/worksonmybench/identity-blocklist   (or $IDENTITY_BLOCKLIST_FILE)
+
+One entry per line: `# comment`, plain text (case-insensitive, whole words), `/regex/` or
+`!exception`. Blocklist hits are reported by entry number, so logs don't repeat them. It fails
+closed: a missing or empty blocklist blocks the push.
+"""
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+EXPECTED_NAME = "Works On My Bench"
+EXPECTED_EMAIL = "git@worksonmybench.dev"
+# Documentation placeholders and the sweep image's own home directory aren't personal details.
+MASK = re.compile(r"192\.0\.2\.\d+|\bgitea\.example\.internal\b|/home/node\b")
+PATTERNS = {
+    "private IP": re.compile(
+        r"\b(?:10\.\d+|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+\b(?!/\d)"
+    ),
+    "MAC address": re.compile(r"\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b", re.I),
+    "internal hostname": re.compile(r"\w\.(?:local|lan|internal|home\.arpa)\b", re.I),
+    "home directory": re.compile(r"/home/[a-z]|\b[A-Z]:\\+Users\\", re.I),
+    "credential": re.compile(r"sk-ant-[\w-]{8,}|\bgh[pousr]_\w{20,}|-----BEGIN [A-Z ]*PRIVATE KEY"),
+}
+ZERO = re.compile(r"^0+$")
+
+
+def git(*args):
+    return subprocess.run(
+        ["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace"
+    ).stdout
+
+
+def load_blocklist():
+    path = Path(
+        os.environ.get("IDENTITY_BLOCKLIST_FILE")
+        or Path.home() / ".config" / "worksonmybench" / "identity-blocklist"
+    )
+    if not path.is_file():
+        sys.exit(f"pre-push: no identity blocklist at {path}; not pushing.")
+    entries, exceptions = [], []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        whole = r"(?<![^\W_]){}(?![^\W_])"
+        if line.startswith("!"):
+            exceptions.append(re.compile(whole.format(re.escape(line[1:].strip())), re.I))
+            continue
+        regex = re.fullmatch(r"/(.+)/[a-z]*", line)
+        try:
+            entries.append(re.compile(regex[1] if regex else whole.format(re.escape(line)), re.I))
+        except re.error:
+            sys.exit(f"pre-push: blocklist entry #{len(entries) + 1} isn't a valid regex; not pushing.")
+    if not entries:
+        sys.exit(f"pre-push: identity blocklist at {path} is empty; not pushing.")
+    return entries, exceptions
+
+
+def scan(text, where, entries, exceptions, findings):
+    masked = MASK.sub(" ", text)
+    for name, pattern in PATTERNS.items():
+        if pattern.search(masked):
+            findings.append(f"{where}: {name}")
+    for exception in exceptions:
+        masked = exception.sub(" ", masked)
+    for number, entry in enumerate(entries, 1):
+        if entry.search(masked):
+            findings.append(f"{where}: blocklist entry #{number}")
+
+
+def check_commit(sha, entries, exceptions, findings):
+    short = sha[:10]
+    an, ae, cn, ce, message = git("show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", sha).split("\0", 4)
+    if (an, ae, cn, ce) != (EXPECTED_NAME, EXPECTED_EMAIL, EXPECTED_NAME, EXPECTED_EMAIL):
+        findings.append(f"commit {short}: author or committer isn't the pseudonym")
+    scan(message, f"commit {short} message", entries, exceptions, findings)
+
+    path = "?"
+    number = 0
+    diff = git("show", "--format=", "--unified=0", "--no-color", "--no-ext-diff", "--root", sha)
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else line[4:]
+            if re.fullmatch(r"(?:.*/)?\.env(?:\.(?:firewall|sweep|push))?", path):
+                findings.append(f"commit {short}: {path}: real env file")
+        elif line.startswith("@@"):
+            found = re.search(r"\+(\d+)", line)
+            number = int(found[1]) if found else 0
+        elif line.startswith("+"):
+            scan(line[1:], f"commit {short} {path}:{number}", entries, exceptions, findings)
+            number += 1
+
+
+def main():
+    entries, exceptions = load_blocklist()
+    findings = []
+    remote = sys.argv[1] if len(sys.argv) > 1 else "origin"
+    for update in sys.stdin:
+        _, local_sha, _, remote_sha = update.split()
+        if ZERO.match(local_sha):  # deleting a ref publishes nothing
+            continue
+        if ZERO.match(remote_sha):
+            commits = git("rev-list", local_sha, "--not", f"--remotes={remote}").split()
+        else:
+            commits = git("rev-list", local_sha, f"^{remote_sha}").split()
+        for sha in commits:
+            check_commit(sha, entries, exceptions, findings)
+    if findings:
+        print("pre-push: not pushing. Found in the outgoing commits:\n", file=sys.stderr)
+        for finding in dict.fromkeys(findings):
+            print(f"  {finding}", file=sys.stderr)
+        print("\nRewrite the commit that added it; a later fix would still publish it.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

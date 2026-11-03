@@ -236,6 +236,13 @@ cd /root/kb-mcp && git pull && docker compose up -d --build
 pip install -e . && GITEA_URL=http://gitea.example.internal DATA_DIR=./data KB_AUTH_DISABLED=1 kb-mcp
 ```
 
+## Contributing and maintenance
+
+`.githooks/pre-push` is an opt-in guard for this repo's maintainer: it refuses a push whose commits
+carry the wrong identity, private network details, credentials or entries from a local blocklist.
+Its docstring has the details. Enable it with `git config core.hooksPath .githooks`. It needs
+`python3`, and it fails closed when the blocklist is missing.
+
 ## License
 
 MIT. See `LICENSE`.
